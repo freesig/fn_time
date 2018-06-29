@@ -157,6 +157,7 @@ impl Stats{
     }
 
     pub fn top(&mut self){
+        let mut output_queue: VecDeque<LineTiming> = VecDeque::new();
         // Create output file if needed
         let mut json_output = match self.output {
             Output::JSON(ref s) => {
@@ -196,17 +197,28 @@ impl Stats{
                     top_durations: durations,
                     average_of_line };
 
-                    match self.output {
-                        Output::JSON(_) => write_json(&mut json_output,
-                        &timings),
-                        Output::Print => println!("{}", timings),
-                    }
+                    output_queue.push_back(timings);
+
                 }
             }
             self.count += 1;
             if self.count > self.reset_at {
                 self.tops = HashMap::new();
                 self.count = 0;
+
+                // Only output at reset
+                loop {
+                    match output_queue.pop_front() {
+                        Some(t) => {
+                            match self.output {
+                                Output::JSON(_) => write_json(&mut json_output,
+                                                              t),
+                                Output::Print => println!("{}", t),
+                            }
+                        },
+                        None => break,
+                    }
+                }
             }
         }
     }
@@ -235,9 +247,9 @@ fn add_duration(top_durations: &mut Vec<Duration>, duration: &Duration) {
     }
 }
 
-fn write_json(output: &mut Option<File>, timing: &LineTiming) {
+fn write_json(output: &mut Option<File>, timing: LineTiming) {
     match output {
-        Some(ref output) => serde_json::to_writer(output, timing).expect("Failed to serialize to json"),
+        Some(ref output) => serde_json::to_writer(output, &timing).expect("Failed to serialize to json"),
         None => println!("Missing output file for JSON output"),
     }
 }
