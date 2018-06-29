@@ -1,9 +1,18 @@
+extern crate serde;
+extern crate serde_json;
+
+#[macro_use]
+extern crate serde_derive;
+
 use std::sync::mpsc::{Sender, Receiver};
 use std::sync::mpsc;
 use std::time::{Instant, Duration};
 use std::collections::{HashMap, VecDeque};
 use std::thread;
 use std::fmt;
+use std::fs::File;
+use std::io::Write;
+use std::fs::OpenOptions;
 
 type LineDuration = VecDeque<(u32, Duration)>;
 
@@ -31,6 +40,12 @@ pub struct Stats{
     count: u64,
     reset_at: u64,
     totals: HashMap<u32, Duration>,
+    output: Output
+}
+
+pub enum Output {
+    Print,
+    JSON(String),
 }
 
 struct KillMsg;
@@ -40,20 +55,25 @@ pub struct StatsHandle{
     handle: thread::JoinHandle<()>,
 }
 
+#[derive(Serialize, Deserialize)]
 struct LineTiming {
     line_number: u32,
     top_durations: Vec<(Duration, f64)>,
     average_of_line: Duration,
 }
 
-pub fn new(num_spots: usize, reset_at: u64) -> (Collector, FnTime, Stats) {
+pub fn new(num_spots: usize, reset_at: u64, output: Output) -> (Collector, FnTime, Stats) {
     let (tx, rx) = mpsc::channel();
+    if let Output::JSON(ref s) = output {
+        wipe_file(&s[..]);
+    }
     (Collector{ tx }, 
      FnTime::new(num_spots),
      Stats{ rx , tops: HashMap::new(), 
          visits: 0, total_time: Duration::new(0, 0), 
          count: 0, reset_at,
          totals: HashMap::new(),
+         output,
      } )
 }
 
@@ -137,6 +157,13 @@ impl Stats{
     }
 
     pub fn top(&mut self){
+        // Create output file if needed
+        let mut json_output = match self.output {
+            Output::JSON(ref s) => {
+                OpenOptions::new().append(true).create(true).open(s).ok()
+            },
+            Output::Print => None,
+        };
         for t in &self.rx {
             // Average duration of function
             let average = self.total_time.checked_div(self.visits);
@@ -165,10 +192,15 @@ impl Stats{
                             (top, top_nano as f64 / av as f64 * 100.0)
                         }else{ (top, 0.0) }
                     }).collect();
-                    let timmings = LineTiming{ line_number: *line,
+                    let timings = LineTiming{ line_number: *line,
                     top_durations: durations,
                     average_of_line };
-                    println!("{}", timmings);
+
+                    match self.output {
+                        Output::JSON(_) => write_json(&mut json_output,
+                        &timings),
+                        Output::Print => println!("{}", timings),
+                    }
                 }
             }
             self.count += 1;
@@ -201,4 +233,16 @@ fn add_duration(top_durations: &mut Vec<Duration>, duration: &Duration) {
     if top_durations.len() > 9 {
         top_durations.pop();
     }
+}
+
+fn write_json(output: &mut Option<File>, timing: &LineTiming) {
+    match output {
+        Some(ref output) => serde_json::to_writer(output, timing).expect("Failed to serialize to json"),
+        None => println!("Missing output file for JSON output"),
+    }
+}
+
+fn wipe_file(output: &str) {
+    let mut f = File::create(output).expect("failed to open log file to wipe");
+    f.write_all(b"").expect("Failed to wipe file");
 }
