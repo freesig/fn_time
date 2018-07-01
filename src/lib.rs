@@ -61,7 +61,7 @@ pub struct StatsHandle{
 }
 
 #[derive(Serialize, Deserialize)]
-struct LineTiming {
+pub struct LineTiming {
     line_number: u32,
     top_durations: Vec<(Duration, f64)>,
     average_of_line: Duration,
@@ -292,7 +292,7 @@ pub fn display(path: PathBuf) -> std::io::Result<()> {
     let json_data = read_json(input, 10);
     for t in json_data {
         println!("{}", t);
+        plotting::show(t);
     }
-    plotting::test();
     Ok(())
 }
