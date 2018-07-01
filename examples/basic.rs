@@ -4,7 +4,7 @@ extern crate rand;
 use std::time::Duration;
 use std::thread;
 
-fn to_time(col: ft::Collector, mut fnt: ft::FnTime) -> (ft::Collector, ft::FnTime) {
+fn to_time(col: ft::Collector, mut fnt: ft::FnTimer) -> (ft::Collector, ft::FnTimer) {
     fnt.capture(line!());
     thread::sleep(Duration::from_millis(200));
     fnt.capture(line!());
