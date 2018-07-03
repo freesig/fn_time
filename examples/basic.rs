@@ -21,7 +21,11 @@ fn to_time(col: ft::Collector, mut fnt: ft::FnTimer) -> (ft::Collector, ft::FnTi
 }
 
 fn main(){
-    let (col, fnt, stats) = ft::new(10, 2, ft::Output::JSON("log.json".to_owned()));
+    let settings = ft::Settings{ max_timers: 10, 
+        average_length: 2, 
+        num_top: 4,
+        output: ft::Output::JSON("performance.log".to_owned()) };
+    let (col, fnt, stats) = ft::new(settings);
     let test_handle = thread::spawn(move || {
         let mut model = (col, fnt);
         for _i in 0..5 {

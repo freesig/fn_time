@@ -4,8 +4,6 @@ extern crate serde_json;
 #[macro_use]
 extern crate serde_derive;
 
-mod plotting;
-
 use std::sync::mpsc::{Sender, Receiver};
 use std::sync::mpsc;
 use std::time::{Instant, Duration};
@@ -15,10 +13,15 @@ use std::fmt;
 use std::fs::File;
 use std::io::Write;
 use std::fs::OpenOptions;
-use std::path::PathBuf;
 
 type LineDuration = VecDeque<(u32, Duration)>;
 
+pub struct Settings {
+    pub max_timers: usize, 
+    pub average_length: u64, 
+    pub num_top: usize,
+    pub output: Output,
+}
 
 pub struct Spot{
     line: u32,
@@ -44,7 +47,8 @@ pub struct Stats{
     count: u64,
     reset_at: u64,
     totals: HashMap<u32, Duration>,
-    output: Output
+    output: Output,
+    num_top: usize,
 }
 
 pub enum Output {
@@ -62,24 +66,30 @@ pub struct StatsHandle{
 
 #[derive(Serialize, Deserialize)]
 pub struct LineTiming {
-    line_number: u32,
-    top_durations: Vec<(Duration, f64)>,
-    average_of_line: Duration,
+    pub line_number: u32,
+    pub top_durations: Vec<(Duration, f64)>,
+    pub average_of_line: (Duration, f64),
 }
 
-pub fn new(num_spots: usize, reset_at: u64, output: Output) -> (Collector, FnTimer, Stats) {
+pub fn new(settings: Settings) -> (Collector, FnTimer, Stats) {
+    let Settings {
+        max_timers,
+        average_length,
+        num_top,
+        output } = settings;
     let (tx, rx) = mpsc::channel();
     if let Output::JSON(ref s) = output {
         wipe_file(&s[..]);
     }
     (Collector{ tx }, 
-     FnTimer::new(num_spots),
+     FnTimer::new(max_timers),
      Stats{ rx , kill_rx: None,
      tops: HashMap::new(), 
          visits: 0, total_time: Duration::new(0, 0), 
-         count: 0, reset_at,
+         count: 0, reset_at: average_length,
          totals: HashMap::new(),
          output,
+         num_top,
      } )
 }
 
@@ -206,7 +216,7 @@ impl Stats{
                 *total_of_line += duration;
                 let average_of_line = total_of_line.checked_div(self.visits).unwrap_or_else(||Duration::new(0, 0));
                 let mut top_durations = self.tops.get_mut(&line).expect("Top durations missing");
-                add_duration(top_durations, &duration);
+                add_duration(top_durations, &duration, self.num_top);
 
                 if let Some(av) = average {
                     let av = duration_to_nano(&av);
@@ -216,6 +226,11 @@ impl Stats{
                             (top, top_nano as f64 / av as f64 * 100.0)
                         }else{ (top, 0.0) }
                     }).collect();
+                    let average_of_line = if av > 0 {
+                        let av_nano = duration_to_nano(&average_of_line);
+                        (average_of_line, av_nano as f64 / av as f64 * 100.0)
+                    }else{ (average_of_line, 0.0) };
+
                     let timings = LineTiming{ line_number: line,
                     top_durations: durations,
                     average_of_line };
@@ -262,10 +277,10 @@ fn duration_to_nano(dur: &Duration) -> u32 {
     (dur.as_secs() as u32 * 1_000_000_000) + dur.subsec_nanos()
 }
 
-fn add_duration(top_durations: &mut Vec<Duration>, duration: &Duration) {
+fn add_duration(top_durations: &mut Vec<Duration>, duration: &Duration, max_durations: usize) {
     top_durations.push(*duration);
     top_durations.sort_by(|a,b| b.cmp(a));
-    if top_durations.len() > 9 {
+    if top_durations.len() >= max_durations {
         top_durations.pop();
     }
 }
@@ -277,22 +292,7 @@ fn write_json(output: &mut Option<File>, timing: LineTiming) {
     }
 }
 
-fn read_json(ref input: File, amount: usize) -> Vec<LineTiming> {
-    let stream = serde_json::Deserializer::from_reader(input).into_iter::<LineTiming>();
-    stream.take(amount).map(|v| v.unwrap()).collect()
-}
-
 fn wipe_file(output: &str) {
     let mut f = File::create(output).expect("failed to open log file to wipe");
     f.write_all(b"").expect("Failed to wipe file");
-}
-
-pub fn display(path: PathBuf) -> std::io::Result<()> {
-    let input = File::open(path)?;
-    let json_data = read_json(input, 10);
-    for t in json_data {
-        println!("{}", t);
-        plotting::show(t);
-    }
-    Ok(())
 }
